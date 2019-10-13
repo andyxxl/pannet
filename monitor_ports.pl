@@ -1,9 +1,14 @@
 #!/usr/bin/perl
 
+# nacitaj/pouzi (use) moduly strict, warnings, diagnostics
+# strict   - prisnejsia kontrola syntaxe
+# warnings - vypisovanie warningov
+# diagnostics - pri chybach podrobnejsi popis chyb
 use strict;
 use warnings;
 use diagnostics;
 use Net::IP;
+use 5.016;
 
 # ZADANIE:
 # Build a program (in any language) for repetitive network scans displaying differences
@@ -35,75 +40,85 @@ use Net::IP;
 # objekt ktory vznikne z argumenta prikazoveho riadku. JE to ip napr. 1.2.3.4.
 # alebo ip range 1.2.3.4-2.3.4.5
 
-#--- VARIABLES ---- 
+#--- VARIABLES ----
 my $host_ip;
-my $netstat_old = '';
-my $netstat_new = '';
-my @line;
-my $ip1;
-my $ip2;
-my $prnt;
+my @lines;
+my %file_hash;
+my $fh;
+my @output;
+my $scr_output;
 
-# cmd line argument reading
+
+# command line argument reading, $ARGV[0] je prvy argument
 if (defined $ARGV[0]) {
+    # vytvorim objekt $host_ip, ktory moze obsahovat range alebo IP addresu
     $host_ip = Net::IP->new($ARGV[0]) or die Net::IP::Error();
 }
 else {
-    print "IP/IP range argument is missing!\n";
+    print "IP or IP range argument is missing!\n";
     exit 0;
 }
 
 
-# nekonecny cyklus prerusi sa pomocou CTRL+C
-while (1) {
+# Loop
+do {
+    # do premennej ip sa ulozi prva adresa ak je to IP range.
+    # Ak to nie je range tam len jedna IP adresa
+    my $ip = $host_ip->ip();
 
-    # Vystup z netstat prikazu sa ulozi do pola @netstat. 
-    # Kazdy riadok vypisu z netstat je jeden prvok pola @netstat.
-    my @netstat = `netstat -tulpan| awk \'{print \$1,\$4,\$5,\$6,\$7}\'`;
+    # premenna $cmd obsahuje shallovsky prikaz ako
+    # napr.: pre danu IP :  netstat -tulpan | awk '$4 ~ /127.0.0.1/ {print $4,$6,$1}' | sort -u
+    my $cmd = q(netstat -tulpan | awk '$4 ~ /).$ip.q(/ {print $4,$6,$1}' | sort -u);
 
-    # pre kazdy prvok z pola (teda riadok z netstatu)
-    for my $new (@netstat) {
+    # do premennej $netstat_resp sa nacita obsah spusteneho shalloveho prikazu
+    # je to jeden dlhy string, ktory obsahuje viacero znakov konca riadku
+    # teda viacriakovy string podla toho co vypise netstat
+    my $netstat_resp = `$cmd`;
 
-        # ignoruj prve dva riadky (hlavicku) z netstatu. 
-        next if ($new =~ /Active/);
-        next if ($new =~ /Proto/);
+    # chomp odreze znak konca riadku uplne na konci (ostatne ponecha).
+    chomp($netstat_resp);
 
-        # riadok rozdel podla medzier do pomocneho pola
-        @line = split '\s+', $new;
- 
-        # ziskam IP addr, oddelim port od IP
-        $ip1 = (split ':', $line[1])[0];
-        next if $ip1 eq ''; # ignoruj prazdne IP. Vzniknu z IPv6 adresy => tcp6 :::22 :::* LISTEN
+    # $netstat_resp rozdeli do pola podla koncov riadkov
+    my @ip_lines = split /\R+/, $netstat_resp;
 
-        $ip2 = (split ':', $line[2])[0];
-        next if $ip2 eq '';
-       
-        # z IP ciek spravim objekty, aby som vedel pouzit funkciu overlaps
-        my $local_addr   = Net::IP->new( $ip1 ) or die Net::IP::Error();
-        my $foreign_addr = Net::IP->new( $ip2 ) or die Net::IP::Error();
+    # do pola @output prida dalsie pole @ip_lines, ale iba ak existuje @ip_lines
+    push @output, @ip_lines if (@ip_lines);
 
-        # Kontrola ci vystup z netstatu obsahuje IP z argumentu prikazoveho riadku
-        # ak ani local_addr ani foreign_addr nie je v range ignoruj 
-        next if (! $host_ip->overlaps($local_addr) ) and (! $host_ip->overlaps($foreign_addr) );
-        
-        # Ak som sa dostal do tohto bodu viem ze riadok obsahuje monitorovanu IP.
-        # Postupne riadky pospajam do jedneho velkeho stringu, aby sa dobre porovnavali
-        # dva po sebe iduce netstaty
-        $netstat_new .= $new;
+} while (++$host_ip); # ak je range prejde na dalsiu IP
+
+# ak existuje (-f) subor scan_history
+if (-f 'scan_history') {
+    # otvor subor na citanie
+    open($fh, '<', 'scan_history' ) or die "Cannot open scan history $!";
+    # prejdi kazdy riadok subora
+    while(<$fh>) {
+        # ak nude koniec riadku zmaz ho
+        chomp($_);
+        # do hashu/dictionary si uloz kluc (ktory je jeden riadok s netstatu) a uloz mu hodnotu 1.
+        # hodnota jedna nie je podstatna
+        $file_hash{"$_"} = 1;
     }
-
-    # porovnam 2 po sebe iduce vystupy z netstatu
-    if ( $netstat_old eq $netstat_new ) {
-        print ".... NO change for $ARGV[0] ....\n" if ($prnt eq 'true');
-        $prnt = 'false';    
-    }
-    else {
-        print "---- NEW change for $ARGV[0] ----\n";
-        print $netstat_new;
-        $prnt = 'true';
-    }
-
-    $netstat_old = $netstat_new; # archyvuj aktualny netstat
-    $netstat_new = ''; # vymaz netstat string
-    sleep 3;           # pockaj 3 sekundy
+    close($fh);  # zavri subor
 }
+
+# otvor subor scan_hostory na pisanie na koniec subora (append)
+open($fh, '>>', 'scan_history' ) or die "Cannot open scan history $!";
+# pre kazdu polozku $item zo vstkych riadkov z outputu netstat
+for my $item (@output) {
+   # ak uz riadok existuje v subore nerob nic ak neexistuje vypis na obrazovku a
+   # zapis si ho do suboru scan_history
+   if (! exists($file_hash{"$item"})) {
+       $scr_output .= "Host: $item\n";
+       say $fh $item;
+   }
+}
+close($fh);
+
+if ($scr_output) {
+    say  $scr_output;
+}
+else {
+   say "No change!";
+}
+
+
