@@ -1,0 +1,59 @@
+Syslog configuration
+
+Prerequsite:
+yum install rsyslog
+ 
+1. Navigate to syslog configuration file for rsyslogd: cd /etc/rsyslog.conf
+2. Select facility to be logged 
+3. Specify severity
+4. Modify /etc/rsyslog.conf with line vi /etc/rsyslog.conf
+
+	*.info;mail.none;authpriv.none;cron.none                /var/log/messages
+
+5. Set verbosity, edit row in /etc/rsyslog.conf *.info;mail.none;authpriv.none;cron.none           /var/log/messages
+6. restart rsyslog daemon systemctl restart rsyslog
+7. systemctl start rsyslog.service
+8. systemctl status rsyslog.service
+
+Enable send syslog to external log server
+
+9. vi /etc/rsyslog.conf
+Uncomment following directives
+
+Execute ModLoad imudp 
+$UDPServerRun 514
+
+10. Define row for log format $template RemoteLogs,"/var/log/%HOSTNAME%/%PROGRAMNAME%.log"
+11. # service rsyslog restart
+
+12. To set external syslog forwarding
+
+vi /etc/syslog-ng/syslog-ng.conf
+destination remote { network("<syslog external IP>" transport("udp") port(514)); };
+service syslog-ng restart
+/////////////////////
+
+vim /etc/systemd/journald.conf 
+
+Add or change:
+
+ForwardToSyslog=yes
+
+Restart journald:
+
+systemctl restart systemd-journald
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
